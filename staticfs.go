@@ -11,9 +11,11 @@ import (
 )
 
 type StaticFS struct {
-	embedFS embed.FS
-	httpFS  http.FileSystem
-	aliases []string
+	embedFS     embed.FS
+	httpFS      http.FileSystem
+	aliases     []string
+	okCallback  OKCallback
+	errCallback ErrCallback
 }
 
 func New(embedfs embed.FS) *StaticFS {
@@ -75,16 +77,37 @@ func (s *StaticFS) open(name string) (http.File, error) {
 	return f, nil
 }
 
+type OKCallback func(c *gin.Context, path string)
+
+func (s *StaticFS) WithOKCallback(f OKCallback) *StaticFS {
+	s.okCallback = f
+	return s
+}
+
+type ErrCallback func(c *gin.Context, err error)
+
+func (s *StaticFS) WithErrCallback(f ErrCallback) *StaticFS {
+	s.errCallback = f
+	return s
+}
+
 func (s *StaticFS) serve() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		file := c.Param("filepath")
 		fp := filepath.Join("/static", filepath.Clean(file))
 		f, err := s.open(fp)
 		if err != nil {
+			if s.errCallback != nil {
+				s.errCallback(c, err)
+			}
 			c.Writer.WriteHeader(http.StatusNotFound)
 			return
 		}
 		f.Close()
+
+		if s.okCallback != nil {
+			s.okCallback(c, fp)
+		}
 		http.FileServer(s.httpFS).ServeHTTP(c.Writer, c.Request)
 	}
 }
