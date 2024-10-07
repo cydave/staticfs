@@ -2,7 +2,6 @@ package main
 
 import (
 	"embed"
-	"log"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -13,19 +12,10 @@ import (
 //go:embed static/*
 var static embed.FS
 
-func configureStaticFS(r *gin.Engine) error {
-	fs := staticfs.New(static)
-	handler := fs.Serve("/static")
-	r.GET("/static/*filepath", handler)
-	return nil
-}
-
 func main() {
 	r := gin.Default()
-	err := configureStaticFS(r)
-	if err != nil {
-		log.Fatal(err)
-	}
+	sfs := staticfs.New(static)
+	sfs.Configure(r)
 
 	r.GET("/", func(c *gin.Context) {
 		page := `

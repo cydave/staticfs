@@ -2,6 +2,7 @@ package staticfs
 
 import (
 	"embed"
+	"io/fs"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -10,18 +11,57 @@ import (
 )
 
 type StaticFS struct {
-	embRoot embed.FS
-	root    http.FileSystem
+	embedFS embed.FS
+	httpFS  http.FileSystem
 	aliases []string
 }
 
-func New(static embed.FS) StaticFS {
-	httpFS := http.FS(static)
-	return StaticFS{embRoot: static, root: httpFS, aliases: []string{}}
+func New(embedfs embed.FS) *StaticFS {
+	httpFS := http.FS(embedfs)
+	return &StaticFS{embedFS: embedfs, httpFS: httpFS, aliases: []string{}}
 }
 
-func (s *StaticFS) Open(name string) (http.File, error) {
-	f, err := s.root.Open(name)
+// WithRootAliases adds top-level aliases, e.g. /static/robots.txt will be available at /robots.txt.
+func (s *StaticFS) WithRootAliases() *StaticFS {
+	aliases := make([]string, 0)
+	entries, err := fs.ReadDir(s.embedFS, "static")
+	if err != nil {
+		panic(err)
+	}
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		aliases = append(aliases, "/"+entry.Name())
+	}
+	s.aliases = aliases
+	return s
+}
+
+// Configure registers endpoints on the gin.Engine to serve static assets.
+func (s *StaticFS) Configure(r *gin.Engine) {
+	handler := s.serve()
+
+	// Handle root aliases in case they are present.
+	if len(s.aliases) > 0 {
+		alias := func(to string) gin.HandlerFunc {
+			return func(c *gin.Context) {
+				c.Request.URL.Path = "/static" + to
+				r.HandleContext(c)
+			}
+		}
+		for _, a := range s.aliases {
+			r.GET(a, alias(a))
+			r.HEAD(a, alias(a))
+		}
+	}
+
+	r.GET("/static/*filepath", handler)
+	r.HEAD("/static/*filepath", handler)
+}
+
+func (s *StaticFS) open(name string) (http.File, error) {
+	f, err := s.httpFS.Open(name)
 	if err != nil {
 		return nil, err
 	}
@@ -35,16 +75,16 @@ func (s *StaticFS) Open(name string) (http.File, error) {
 	return f, nil
 }
 
-func (s *StaticFS) Serve(prefix string) gin.HandlerFunc {
+func (s *StaticFS) serve() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		file := c.Param("filepath")
-		fp := filepath.Join(prefix, filepath.Clean(file))
-		f, err := s.Open(fp)
+		fp := filepath.Join("/static", filepath.Clean(file))
+		f, err := s.open(fp)
 		if err != nil {
 			c.Writer.WriteHeader(http.StatusNotFound)
 			return
 		}
 		f.Close()
-		http.FileServer(s.root).ServeHTTP(c.Writer, c.Request)
+		http.FileServer(s.httpFS).ServeHTTP(c.Writer, c.Request)
 	}
 }

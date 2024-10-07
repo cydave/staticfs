@@ -2,8 +2,6 @@ package main
 
 import (
 	"embed"
-	"io/fs"
-	"log"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -14,52 +12,10 @@ import (
 //go:embed static/*
 var static embed.FS
 
-// Get root assets in the static FS. Every file that is in the top-level
-// directory is returned.
-func getRootAssets() []string {
-	assets := make([]string, 0)
-	entries, err := fs.ReadDir(static, "static")
-	if err != nil {
-		log.Fatal(err)
-	}
-	for _, entry := range entries {
-		if entry.IsDir() {
-			continue
-		}
-		assets = append(assets, "/"+entry.Name())
-	}
-	return assets
-}
-
-func configureStaticFS(r *gin.Engine) error {
-	sfs := staticfs.New(static)
-	handler := sfs.Serve("/static")
-
-	// Handle top-level static assets.
-	// We alias them to point from / to /static
-	// e.g.  /robots.txt => /static/robots.txt
-	alias := func(to string) gin.HandlerFunc {
-		return func(c *gin.Context) {
-			c.Request.URL.Path = "/static" + to
-			r.HandleContext(c)
-		}
-	}
-	aliases := getRootAssets()
-	for _, a := range aliases {
-		r.GET(a, alias(a))
-	}
-
-	// Non top-level assets are mapped as expected.
-	r.GET("/static/*filepath", handler)
-	return nil
-}
-
 func main() {
 	r := gin.Default()
-	err := configureStaticFS(r)
-	if err != nil {
-		log.Fatal(err)
-	}
+	sfs := staticfs.New(static).WithRootAliases()
+	sfs.Configure(r)
 
 	r.GET("/", func(c *gin.Context) {
 		page := `
